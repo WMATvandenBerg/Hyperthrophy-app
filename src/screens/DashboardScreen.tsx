@@ -1,6 +1,6 @@
 import { Activity, Clock3, HeartPulse } from "lucide-react";
 import { AppCard } from "../components/ui";
-import { generateProgramInsights } from "../lib/engine";
+import { generateProgramInsights, getRpWeekTargetSets } from "../lib/engine";
 import type { AppSeedData } from "../types/models";
 
 export function DashboardScreen({
@@ -17,6 +17,17 @@ export function DashboardScreen({
   const chest = data.volumes.find((v) => v.muscle_group === "Chest");
   const progress = chest ? Math.round((chest.current_volume / chest.mrv) * 100) : 0;
   const insights = generateProgramInsights(data);
+  const weekTargets = data.volumes.map((v) => ({
+    muscle_group: v.muscle_group,
+    target_sets: getRpWeekTargetSets({
+      mev: v.mev,
+      mrv: v.mrv,
+      currentWeek: data.program.current_week,
+      mesocycleLength: data.program.mesocycle_length,
+      deloadWeek: data.program.deload_week,
+    }),
+  }));
+  const totalWeekTarget = weekTargets.reduce((acc, x) => acc + x.target_sets, 0);
 
   return (
     <div className="space-y-4">
@@ -60,6 +71,20 @@ export function DashboardScreen({
           {insights.recommendations.slice(0, 3).map((r) => (
             <div key={r.muscle_group} className="rounded-2xl bg-surface2 p-2 text-xs text-zinc-300">
               {r.muscle_group}: {r.action.toUpperCase()} to {r.next_week_sets} sets
+            </div>
+          ))}
+        </div>
+      </AppCard>
+
+      <AppCard className="space-y-2">
+        <p className="text-sm text-zinc-400">RP Weekly Volume Ramp</p>
+        <p className="text-xs text-zinc-400">
+          Week {data.program.current_week}/{data.program.mesocycle_length}: <span className="font-semibold text-lime">{totalWeekTarget} planned sets</span> across tracked muscles.
+        </p>
+        <div className="space-y-2">
+          {weekTargets.slice(0, 5).map((m) => (
+            <div key={m.muscle_group} className="rounded-2xl bg-surface2 p-2 text-xs text-zinc-300">
+              {m.muscle_group}: {m.target_sets} sets this week
             </div>
           ))}
         </div>

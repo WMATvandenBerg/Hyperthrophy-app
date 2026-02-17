@@ -7,12 +7,13 @@ import {
   useCompleteOnboarding,
   useCreateCheckin,
   useCreateCustomExercise,
+  useEndMesocycleEarly,
   useSaveExerciseLog,
   useSetAuthenticatedUser,
   useStartNewMesocycle,
 } from "./hooks/useAppData";
 import { generateSmartCyclePreset } from "./lib/engine";
-import { getStoredSession, loginWithEmail, logoutSession, type AuthSession } from "./lib/auth";
+import { getStoredSession, loginWithEmail, logoutSession, registerWithEmail, type AuthSession } from "./lib/auth";
 import { CheckInScreen } from "./screens/CheckInScreen";
 import { DashboardScreen } from "./screens/DashboardScreen";
 import { LoginScreen } from "./screens/LoginScreen";
@@ -36,6 +37,7 @@ function AppContent() {
   const createCheckin = useCreateCheckin();
   const saveLog = useSaveExerciseLog();
   const startNewMesocycle = useStartNewMesocycle();
+  const endMesocycleEarly = useEndMesocycleEarly();
   const setAuthenticatedUser = useSetAuthenticatedUser();
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
   const [cycleBuilderOpen, setCycleBuilderOpen] = useState(false);
@@ -153,6 +155,14 @@ function AppContent() {
             first_name: next.name.split(" ")[0] ?? "Athlete",
           });
         }}
+        onRegister={async ({ name, email, password }) => {
+          const next = await registerWithEmail({ name, email, password });
+          setSession(next);
+          await setAuthenticatedUser.mutateAsync({
+            id: next.user_id,
+            first_name: next.name.split(" ")[0] ?? "Athlete",
+          });
+        }}
       />
     );
   }
@@ -223,6 +233,10 @@ function AppContent() {
           data={safeData}
           smartPreset={smartPreset}
           onStartNewMesocycle={() => setCycleBuilderOpen(true)}
+          onEndMesocycleEarly={async (input) => {
+            await endMesocycleEarly.mutateAsync(input);
+            setCycleBuilderOpen(true);
+          }}
           onCreateExercise={async ({ name, muscle_group, equipment }) => {
             await createExercise.mutateAsync({ name, muscle_group, equipment });
           }}

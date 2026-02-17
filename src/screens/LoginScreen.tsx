@@ -5,9 +5,13 @@ import { demoCredentials } from "../lib/auth";
 
 export function LoginScreen({
   onLogin,
+  onRegister,
 }: {
   onLogin: (email: string, password: string) => Promise<void>;
+  onRegister: (input: { name: string; email: string; password: string }) => Promise<void>;
 }) {
+  const [mode, setMode] = useState<"login" | "register">("login");
+  const [name, setName] = useState("");
   const [email, setEmail] = useState(demoCredentials.athlete.email);
   const [password, setPassword] = useState(demoCredentials.athlete.password);
   const [error, setError] = useState("");
@@ -17,9 +21,13 @@ export function LoginScreen({
     setError("");
     setLoading(true);
     try {
-      await onLogin(email, password);
+      if (mode === "login") {
+        await onLogin(email, password);
+      } else {
+        await onRegister({ name, email, password });
+      }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Login failed");
+      setError(e instanceof Error ? e.message : mode === "login" ? "Login failed" : "Registration failed");
     } finally {
       setLoading(false);
     }
@@ -32,6 +40,36 @@ export function LoginScreen({
         <p className="text-sm text-zinc-400">Log in to your account to access your mesocycle data, progression engine, and workout analytics.</p>
 
         <AppCard className="space-y-3">
+          <div className="grid grid-cols-2 gap-2">
+            <SecondaryButton
+              onClick={() => {
+                setMode("login");
+                setError("");
+              }}
+              className={mode === "login" ? "border-lime text-lime" : ""}
+            >
+              Sign In
+            </SecondaryButton>
+            <SecondaryButton
+              onClick={() => {
+                setMode("register");
+                setError("");
+                setEmail("");
+                setPassword("");
+              }}
+              className={mode === "register" ? "border-lime text-lime" : ""}
+            >
+              Create Account
+            </SecondaryButton>
+          </div>
+
+          {mode === "register" && (
+            <>
+              <p className="text-xs text-zinc-400">Name</p>
+              <TextInput value={name} onChange={setName} placeholder="Your name" />
+            </>
+          )}
+
           <p className="text-xs text-zinc-400">Email</p>
           <div className="flex items-center gap-2 rounded-2xl bg-surface2 px-3 py-2">
             <Mail className="h-4 w-4 text-lime" />
@@ -45,7 +83,9 @@ export function LoginScreen({
           </div>
 
           {error ? <p className="text-xs text-red-300">{error}</p> : null}
-          <PrimaryButton onClick={submit} disabled={loading}>{loading ? "Signing in..." : "Sign In"}</PrimaryButton>
+          <PrimaryButton onClick={submit} disabled={loading}>
+            {loading ? mode === "login" ? "Signing in..." : "Creating..." : mode === "login" ? "Sign In" : "Create Account"}
+          </PrimaryButton>
         </AppCard>
 
         <AppCard className="space-y-2">

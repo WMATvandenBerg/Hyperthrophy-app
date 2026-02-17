@@ -32,6 +32,32 @@ export interface SmartCyclePreset {
   smart_aggressiveness: "Conservative" | "Balanced" | "Aggressive";
 }
 
+export function getRpWeekTargetSets({
+  mev,
+  mrv,
+  currentWeek,
+  mesocycleLength,
+  deloadWeek,
+}: {
+  mev: number;
+  mrv: number;
+  currentWeek: number;
+  mesocycleLength: number;
+  deloadWeek?: number;
+}) {
+  const week = Math.max(1, Math.min(mesocycleLength, currentWeek));
+  const deloadAt = Math.max(2, Math.min(mesocycleLength, deloadWeek ?? mesocycleLength));
+
+  if (week >= deloadAt) {
+    return Math.max(4, Math.round(mev * 0.6));
+  }
+
+  const overloadWeeks = Math.max(1, deloadAt - 1);
+  const progress = overloadWeeks <= 1 ? 1 : (week - 1) / (overloadWeeks - 1);
+  const target = mev + progress * (mrv - mev);
+  return Math.max(4, Math.round(target));
+}
+
 function avg(values: number[]) {
   if (!values.length) return 0;
   return values.reduce((a, b) => a + b, 0) / values.length;

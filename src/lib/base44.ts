@@ -1,5 +1,6 @@
 import { seedData } from "../data/seed";
 import { buildPrescriptions, buildTrainingDays } from "./programBuilder";
+import { getStoredSession } from "./auth";
 import type {
   AppSeedData,
   Exercise,
@@ -10,7 +11,9 @@ import type {
   WeeklyCheckIn,
 } from "../types/models";
 
-const STORAGE_KEY = "hypertrophy-db-v1";
+const DB_STORE_KEY = "hypertrophy-db-store-v1";
+const LEGACY_STORAGE_KEY = "hypertrophy-db-v1";
+const ACTIVE_USER_KEY = "hypertrophy-active-user-v1";
 const EXERCISE_CACHE_KEY = "hypertrophy-external-exercises-v1";
 const EXERCISE_SOURCE_URL = "https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/dist/exercises.json";
 
@@ -18,46 +21,96 @@ function canUseStorage() {
   return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
 }
 
-function loadDb(): AppSeedData {
-  if (!canUseStorage()) return structuredClone(seedData);
-  const raw = window.localStorage.getItem(STORAGE_KEY);
-  if (!raw) return structuredClone(seedData);
+type DbStore = Record<string, AppSeedData>;
+
+function normalizeDb(input: Partial<AppSeedData>, fallback: AppSeedData): AppSeedData {
+  const safeUser =
+    input.user && typeof input.user === "object"
+      ? { ...fallback.user, ...input.user }
+      : fallback.user;
+  const safeProgram =
+    input.program && typeof input.program === "object"
+      ? { ...fallback.program, ...input.program }
+      : fallback.program;
+  return {
+    ...fallback,
+    ...input,
+    user: safeUser,
+    program: safeProgram,
+    training_days: Array.isArray(input.training_days) ? input.training_days : fallback.training_days,
+    volumes: Array.isArray(input.volumes) ? input.volumes : fallback.volumes,
+    exercises: Array.isArray(input.exercises) ? input.exercises : fallback.exercises,
+    prescriptions: Array.isArray(input.prescriptions) ? input.prescriptions : fallback.prescriptions,
+    logs: Array.isArray(input.logs) ? input.logs : fallback.logs,
+    checkins: Array.isArray(input.checkins) ? input.checkins : fallback.checkins,
+    mesocycle_history: Array.isArray(input.mesocycle_history) ? input.mesocycle_history : [],
+  } as AppSeedData;
+}
+
+function makeSeedForUser(userId: string, firstName?: string) {
+  const base = structuredClone(seedData);
+  return {
+    ...base,
+    user: {
+      ...base.user,
+      id: userId,
+      first_name: firstName ?? base.user.first_name,
+    },
+  };
+}
+
+function loadDbStore(): DbStore {
+  if (!canUseStorage()) return { [seedData.user.id]: structuredClone(seedData) };
+  const raw = window.localStorage.getItem(DB_STORE_KEY);
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as Record<string, Partial<AppSeedData>>;
+      const store: DbStore = {};
+      Object.entries(parsed).forEach(([userId, data]) => {
+        store[userId] = normalizeDb(data, makeSeedForUser(userId));
+      });
+      if (Object.keys(store).length) return store;
+    } catch {
+      // ignore and try legacy fallback
+    }
+  }
+
+  const legacy = window.localStorage.getItem(LEGACY_STORAGE_KEY);
+  if (!legacy) return { [seedData.user.id]: structuredClone(seedData) };
   try {
-    const parsed = JSON.parse(raw) as Partial<AppSeedData>;
-    const base = structuredClone(seedData);
-    const safeUser =
-      parsed.user && typeof parsed.user === "object"
-        ? { ...base.user, ...parsed.user }
-        : base.user;
-    const safeProgram =
-      parsed.program && typeof parsed.program === "object"
-        ? { ...base.program, ...parsed.program }
-        : base.program;
-    return {
-      ...base,
-      ...parsed,
-      user: safeUser,
-      program: safeProgram,
-      training_days: Array.isArray(parsed.training_days) ? parsed.training_days : base.training_days,
-      volumes: Array.isArray(parsed.volumes) ? parsed.volumes : base.volumes,
-      exercises: Array.isArray(parsed.exercises) ? parsed.exercises : base.exercises,
-      prescriptions: Array.isArray(parsed.prescriptions) ? parsed.prescriptions : base.prescriptions,
-      logs: Array.isArray(parsed.logs) ? parsed.logs : base.logs,
-      checkins: Array.isArray(parsed.checkins) ? parsed.checkins : base.checkins,
-      mesocycle_history: Array.isArray(parsed.mesocycle_history) ? parsed.mesocycle_history : [],
-    } as AppSeedData;
+    const parsed = JSON.parse(legacy) as Partial<AppSeedData>;
+    const userId = parsed.user?.id ?? seedData.user.id;
+    const migrated = normalizeDb(parsed, makeSeedForUser(userId));
+    return { [userId]: migrated };
   } catch {
-    return structuredClone(seedData);
+    return { [seedData.user.id]: structuredClone(seedData) };
   }
 }
 
-function persistDb(data: AppSeedData) {
+function persistDbStore(store: DbStore) {
   if (!canUseStorage()) return;
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  window.localStorage.setItem(DB_STORE_KEY, JSON.stringify(store));
+  window.localStorage.removeItem(LEGACY_STORAGE_KEY);
 }
 
-let db: AppSeedData = loadDb();
-let externalExercisesHydration: Promise<void> | null = null;
+function getInitialUserId(store: DbStore) {
+  const fromSession = getStoredSession()?.user_id;
+  if (fromSession) return fromSession;
+  if (canUseStorage()) {
+    const fromStorage = window.localStorage.getItem(ACTIVE_USER_KEY);
+    if (fromStorage) return fromStorage;
+  }
+  return Object.keys(store)[0] ?? seedData.user.id;
+}
+
+let dbStore: DbStore = loadDbStore();
+let activeUserId = getInitialUserId(dbStore);
+if (!dbStore[activeUserId]) {
+  dbStore[activeUserId] = makeSeedForUser(activeUserId);
+}
+let db: AppSeedData = dbStore[activeUserId];
+let externalExercisesHydration: Promise<Exercise[]> | null = null;
+let externalExercisesCache: Exercise[] | null = null;
 
 const wait = (ms = 120) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -137,7 +190,7 @@ function mergeExternalExercises(external: Exercise[]) {
   const toAdd = external.filter((e) => !existingByKey.has(dedupeKey(e.name, e.muscle_group)));
   if (!toAdd.length) return;
   db.exercises = [...db.exercises, ...toAdd];
-  persistDb(db);
+  persistCurrentDb();
 }
 
 function readCachedExternalExercises(): Exercise[] {
@@ -171,30 +224,55 @@ async function fetchExternalExercises(): Promise<unknown> {
   }
 }
 
-async function hydrateExternalExerciseLibrary() {
+async function getExternalExerciseLibrary() {
+  if (externalExercisesCache) return externalExercisesCache;
   if (externalExercisesHydration) {
-    await externalExercisesHydration;
-    return;
+    return externalExercisesHydration;
   }
 
-  externalExercisesHydration = (async () => {
+  externalExercisesHydration = (async (): Promise<Exercise[]> => {
     const cached = readCachedExternalExercises();
-    if (cached.length) {
-      mergeExternalExercises(cached);
+    if (cached.length && !externalExercisesCache) {
+      externalExercisesCache = cached;
     }
 
     const fetchedRaw = await fetchExternalExercises();
     const fetched = parseExternalExercises(fetchedRaw);
     if (fetched.length) {
       writeCachedExternalExercises(fetchedRaw);
-      mergeExternalExercises(fetched);
+      externalExercisesCache = fetched;
     }
+    return externalExercisesCache ?? [];
   })();
 
-  await externalExercisesHydration;
+  return externalExercisesHydration;
 }
 
-function summarizeCurrentMesocycle(data: AppSeedData): MesocycleSummary {
+function setActiveUser(userId: string) {
+  activeUserId = userId;
+  if (!dbStore[activeUserId]) {
+    dbStore[activeUserId] = makeSeedForUser(activeUserId);
+  }
+  db = dbStore[activeUserId];
+  if (canUseStorage()) {
+    window.localStorage.setItem(ACTIVE_USER_KEY, activeUserId);
+  }
+}
+
+function persistCurrentDb() {
+  dbStore[activeUserId] = db;
+  persistDbStore(dbStore);
+}
+
+async function hydrateExternalExerciseLibrary() {
+  const library = await getExternalExerciseLibrary();
+  mergeExternalExercises(library);
+}
+
+function summarizeCurrentMesocycle(
+  data: AppSeedData,
+  opts?: { endedEarly?: boolean; reason?: string; note?: string },
+): MesocycleSummary {
   const prescribed = data.logs.reduce((acc, l) => acc + (l.prescribed_sets ?? l.sets_completed.length), 0);
   const completed = data.logs.reduce((acc, l) => acc + l.sets_completed.length, 0);
   const completionRate = prescribed ? completed / prescribed : 1;
@@ -220,6 +298,17 @@ function summarizeCurrentMesocycle(data: AppSeedData): MesocycleSummary {
     Math.min(1, completionRate * 0.5 + (1 - avgFatigue / 10) * 0.3 + (1 - avgRepDropoff) * 0.2),
   );
 
+  const baseNote =
+    completionRate < 0.85
+      ? "Completion below target; consider reducing starting volume."
+      : effectivenessScore >= 0.75
+        ? "Smart suggestions performed well this cycle."
+        : "Mixed response; keep smart presets editable and review key muscles.";
+  const earlyStopNote = opts?.endedEarly
+    ? `Ended early: ${opts.reason ?? "unspecified"}${opts.note ? ` | ${opts.note}` : ""}`
+    : "";
+  const notes = [earlyStopNote, baseNote].filter(Boolean).join(" • ");
+
   return {
     id: `m${Date.now()}`,
     created_at: new Date().toISOString(),
@@ -232,12 +321,7 @@ function summarizeCurrentMesocycle(data: AppSeedData): MesocycleSummary {
     suggestion_acceptance_rate: Number(acceptanceRate.toFixed(2)),
     suggestion_effectiveness_score: Number(effectivenessScore.toFixed(2)),
     smart_aggressiveness: data.program.smart_aggressiveness ?? "Balanced",
-    notes:
-      completionRate < 0.85
-        ? "Completion below target; consider reducing starting volume."
-        : effectivenessScore >= 0.75
-          ? "Smart suggestions performed well this cycle."
-          : "Mixed response; keep smart presets editable and review key muscles.",
+    notes,
   };
 }
 
@@ -288,6 +372,10 @@ function applyProgramSetup(setup: ProgramSetupInput) {
 export const base44Client = {
   async getDashboardData() {
     await wait();
+    const sessionUserId = getStoredSession()?.user_id;
+    if (sessionUserId && sessionUserId !== activeUserId) {
+      setActiveUser(sessionUserId);
+    }
     await hydrateExternalExerciseLibrary();
     return db;
   },
@@ -295,17 +383,20 @@ export const base44Client = {
   async completeOnboarding(setup: ProgramSetupInput) {
     await wait();
     applyProgramSetup(setup);
-    persistDb(db);
+    persistCurrentDb();
     return db.user;
   },
 
   async setAuthenticatedUser(user: Partial<UserProfile>) {
     await wait();
+    if (user.id) {
+      setActiveUser(user.id);
+    }
     db.user = {
       ...db.user,
       ...user,
     };
-    persistDb(db);
+    persistCurrentDb();
     return db.user;
   },
 
@@ -315,7 +406,20 @@ export const base44Client = {
       db.mesocycle_history.unshift(summarizeCurrentMesocycle(db));
     }
     applyProgramSetup(setup);
-    persistDb(db);
+    persistCurrentDb();
+    return db.program;
+  },
+
+  async endMesocycleEarly(input: { reason: string; note?: string }) {
+    await wait();
+    db.mesocycle_history.unshift(
+      summarizeCurrentMesocycle(db, { endedEarly: true, reason: input.reason, note: input.note }),
+    );
+    db.program = {
+      ...db.program,
+      status: "completed",
+    };
+    persistCurrentDb();
     return db.program;
   },
 
@@ -327,21 +431,21 @@ export const base44Client = {
       ...exercise,
     };
     db.exercises.unshift(created);
-    persistDb(db);
+    persistCurrentDb();
     return created;
   },
 
   async saveExerciseLog(log: ExerciseLog) {
     await wait();
     db.logs.unshift(log);
-    persistDb(db);
+    persistCurrentDb();
     return log;
   },
 
   async createCheckin(checkin: WeeklyCheckIn) {
     await wait();
     db.checkins.unshift(checkin);
-    persistDb(db);
+    persistCurrentDb();
     return checkin;
   },
 };

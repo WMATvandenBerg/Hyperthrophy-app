@@ -2,6 +2,7 @@ import { motion } from "framer-motion";
 import { AlertTriangle, ChevronDown, ChevronUp, Timer, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { AppCard, NumberStepper, PrimaryButton, SecondaryButton, SelectChip } from "../components/ui";
+import { getRpWeekTargetSets } from "../lib/engine";
 import type { AppSeedData, ExerciseLog, LoggedSet } from "../types/models";
 
 const MISSED_SET_REASONS = [
@@ -82,17 +83,29 @@ export function WorkoutScreen({
   const progress = exercises.length ? ((exerciseIndex + 1) / exercises.length) * 100 : 0;
 
   const totalVolume = useMemo(() => doneSets.reduce((acc, set) => acc + set.reps * set.weight, 0), [doneSets]);
-  const weekSetTarget = data.volumes.reduce((acc, v) => acc + v.current_volume, 0);
-  const daySetTarget = exercises.reduce((acc, p) => acc + p.sets, 0);
+  const weekSetTarget = data.volumes.reduce(
+    (acc, v) =>
+      acc +
+      getRpWeekTargetSets({
+        mev: v.mev,
+        mrv: v.mrv,
+        currentWeek: data.program.current_week,
+        mesocycleLength: data.program.mesocycle_length,
+        deloadWeek: data.program.deload_week,
+      }),
+    0,
+  );
+  const daySetTarget = exercises.reduce((acc, p) => acc + getPrescriptionWeekSets(data, p.exercise_id, p.sets), 0);
 
   const currentModel = current?.progression_model ?? data.program.progression_model ?? "DoubleProgression";
   const hasNoProgrammedExercises = dayCards.every((x) => x.prescriptions.length === 0);
+  const currentSetTarget = current ? getPrescriptionWeekSets(data, current.exercise_id, current.sets) : 0;
 
   const repRange = parseRepRange(current?.target_reps ?? "8-12");
   const overRepSets = doneSets.filter((s) => s.reps > repRange.max).length;
   const overRepFlag = overRepSets >= 2;
-  const canLogSet = current ? doneSets.length < current.sets : false;
-  const missedSets = current ? Math.max(0, current.sets - doneSets.length) : 0;
+  const canLogSet = current ? doneSets.length < currentSetTarget : false;
+  const missedSets = current ? Math.max(0, currentSetTarget - doneSets.length) : 0;
 
   useEffect(() => {
     if (!exercise || !current) return;
@@ -142,9 +155,9 @@ export function WorkoutScreen({
       sets_completed: doneSets,
       total_volume_kg: totalVolume,
       performance_rating: Math.max(1, Math.min(10, Math.round(avg(doneSets.map((s) => 10 - s.rir))))),
-      prescribed_sets: current.sets,
+      prescribed_sets: currentSetTarget,
       sets_completed_count: doneSets.length,
-      unused_sets: Math.max(0, current.sets - doneSets.length),
+      unused_sets: Math.max(0, currentSetTarget - doneSets.length),
       unused_set_reason: opts?.reason,
       unused_set_severity: opts?.severity,
       unused_set_note: opts?.note,
@@ -168,7 +181,7 @@ export function WorkoutScreen({
 
   const handleNext = async () => {
     if (!current) return;
-    if (doneSets.length < current.sets) {
+    if (doneSets.length < currentSetTarget) {
       setUnderCompleteOpen(true);
       return;
     }
@@ -221,7 +234,7 @@ export function WorkoutScreen({
           Model: <span className="font-semibold text-lime">{currentModel}</span> • Day target: <span className="font-semibold">{daySetTarget} sets</span>
         </p>
         <p className="text-xs text-zinc-400">
-          Weekly target across muscles: {weekSetTarget} sets. Drive overload, keep set quality high, avoid RIR below {Math.max(0, current?.target_rir ?? 1)} too early.
+          Week {data.program.current_week}/{data.program.mesocycle_length} target across muscles: {weekSetTarget} sets. Drive overload, keep set quality high, avoid RIR below {Math.max(0, current?.target_rir ?? 1)} too early.
         </p>
       </AppCard>
 
@@ -243,10 +256,10 @@ export function WorkoutScreen({
           <AppCard className="space-y-2">
             <div className="flex items-center justify-between">
               <p className="text-xs text-zinc-400">Exercise {exerciseIndex + 1} / {exercises.length}</p>
-              <p className="text-xs text-zinc-300">Sets: <span className="text-lime">{doneSets.length}</span> / {current.sets}</p>
+              <p className="text-xs text-zinc-300">Sets: <span className="text-lime">{doneSets.length}</span> / {currentSetTarget}</p>
             </div>
             <p className="text-xl font-semibold">{exercise.name}</p>
-            <p className="text-sm text-zinc-400">{current.sets} sets • {current.target_reps} reps • Target RIR {current.target_rir}</p>
+            <p className="text-sm text-zinc-400">{currentSetTarget} sets • {current.target_reps} reps • Target RIR {current.target_rir}</p>
             <p className="text-xs text-zinc-400">{current.progression_reason}</p>
           </AppCard>
 
@@ -338,10 +351,10 @@ export function WorkoutScreen({
 
           <AppCard className="space-y-1">
             <p className="text-xs text-zinc-400">Execution Quality</p>
-            <p className="text-sm">Set completion: {doneSets.length}/{current.sets}</p>
+            <p className="text-sm">Set completion: {doneSets.length}/{currentSetTarget}</p>
             <p className="text-sm">Rep adherence: {repAdherencePercent(doneSets, repRange.min, repRange.max)}%</p>
             <p className="text-sm">Load appropriateness: {loadAppropriateness(doneSets, repRange.min, repRange.max)}</p>
-            <p className="text-sm">Next action: {nextAction(doneSets, current.sets, repRange.max)}</p>
+            <p className="text-sm">Next action: {nextAction(doneSets, currentSetTarget, repRange.max)}</p>
           </AppCard>
 
           <div className="grid grid-cols-2 gap-3 pb-2">
@@ -365,7 +378,7 @@ export function WorkoutScreen({
           <div className="w-full max-w-md animate-slide-up rounded-t-3xl bg-surface p-5">
             <h3 className="mb-1 text-lg font-semibold">Programmed sets not completed</h3>
             <p className="mb-3 text-sm text-zinc-400">
-              You completed {doneSets.length}/{current.sets} sets. Please add a reason to help review and adjust your plan quality.
+              You completed {doneSets.length}/{currentSetTarget} sets. Please add a reason to help review and adjust your plan quality.
             </p>
 
             <div className="space-y-2">
@@ -483,4 +496,22 @@ function getLatestLoadRecommendation(data: AppSeedData, exerciseId: string) {
   );
   const found = ordered.find((l) => l.exercise_id === exerciseId && l.next_load_recommendation);
   return found?.next_load_recommendation;
+}
+
+function getPrescriptionWeekSets(data: AppSeedData, exerciseId: string, baseSets: number) {
+  const exercise = data.exercises.find((e) => e.id === exerciseId);
+  if (!exercise) return baseSets;
+  const muscle = data.volumes.find((v) => v.muscle_group === exercise.muscle_group);
+  if (!muscle) return baseSets;
+
+  const weekTarget = getRpWeekTargetSets({
+    mev: muscle.mev,
+    mrv: muscle.mrv,
+    currentWeek: data.program.current_week,
+    mesocycleLength: data.program.mesocycle_length,
+    deloadWeek: data.program.deload_week,
+  });
+  const baselineMuscleSets = Math.max(1, muscle.current_volume);
+  const scaled = Math.round(baseSets * (weekTarget / baselineMuscleSets));
+  return Math.max(1, scaled);
 }

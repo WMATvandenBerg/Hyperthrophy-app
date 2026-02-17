@@ -33,6 +33,14 @@ export function useStartNewMesocycle() {
   });
 }
 
+export function useEndMesocycleEarly() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { reason: string; note?: string }) => base44Client.endMesocycleEarly(input),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["dashboard-data"] }),
+  });
+}
+
 export function useCreateCustomExercise() {
   const queryClient = useQueryClient();
   return useMutation({

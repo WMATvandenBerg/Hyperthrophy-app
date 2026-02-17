@@ -8,21 +8,37 @@ export function ProfileScreen({
   data,
   onCreateExercise,
   onStartNewMesocycle,
+  onEndMesocycleEarly,
   smartPreset,
   onLogout,
 }: {
   data: AppSeedData;
   onCreateExercise: (input: { name: string; muscle_group: string; equipment: string }) => Promise<void>;
   onStartNewMesocycle: () => void;
+  onEndMesocycleEarly: (input: { reason: string; note?: string }) => Promise<void>;
   smartPreset: SmartCyclePreset;
   onLogout: () => Promise<void> | void;
 }) {
   const [open, setOpen] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
+  const [stopOpen, setStopOpen] = useState(false);
+  const [stopReason, setStopReason] = useState("Recovery issues");
+  const [stopNote, setStopNote] = useState("");
+  const [stopping, setStopping] = useState(false);
   const [libraryQuery, setLibraryQuery] = useState("");
   const [name, setName] = useState("");
   const [muscle, setMuscle] = useState("Back");
   const [equipment, setEquipment] = useState("Cable");
+  const stopReasons = [
+    "Recovery issues",
+    "Program too difficult",
+    "Program too easy",
+    "Pain / injury concerns",
+    "Scheduling / time constraints",
+    "Motivation / adherence drop",
+    "Switching goal phase",
+    "Other",
+  ];
   const filteredExercises = data.exercises.filter((e) => {
     const q = libraryQuery.trim().toLowerCase();
     if (!q) return true;
@@ -63,6 +79,13 @@ export function ProfileScreen({
         </button>
         <PrimaryButton onClick={onStartNewMesocycle}>Start New Mesocycle (Smart)</PrimaryButton>
         <PrimaryButton onClick={() => setOpen(true)} className="flex items-center justify-center gap-2"><PlusCircle className="h-4 w-4" /> Create Custom Exercise</PrimaryButton>
+        <button
+          type="button"
+          onClick={() => setStopOpen(true)}
+          className="w-full rounded-full border border-amber-500/70 bg-amber-500/10 px-5 py-3 text-sm text-amber-200 transition hover:bg-amber-500/20"
+        >
+          End Mesocycle Early
+        </button>
       </AppCard>
 
       <AppCard className="space-y-3">
@@ -154,6 +177,62 @@ export function ProfileScreen({
               {!filteredExercises.length && (
                 <p className="rounded-2xl bg-surface2 p-3 text-xs text-zinc-400">No exercises found for this search.</p>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {stopOpen && (
+        <div className="fixed inset-0 z-40 grid place-items-end bg-black/60">
+          <div className="w-full max-w-md animate-slide-up rounded-t-3xl bg-surface p-5">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-lg font-semibold">End Mesocycle Early</h2>
+              <button type="button" onClick={() => setStopOpen(false)} className="rounded-full p-1 text-zinc-400 hover:bg-surface2 hover:text-white">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <p className="mb-3 text-xs text-zinc-400">
+              Choose a reason. This will be saved in mesocycle history and used for smarter next-cycle recommendations.
+            </p>
+            <div className="space-y-2">
+              {stopReasons.map((reason) => (
+                <button
+                  key={reason}
+                  type="button"
+                  onClick={() => setStopReason(reason)}
+                  className={`w-full rounded-2xl border px-3 py-2 text-left text-sm ${
+                    stopReason === reason ? "border-lime bg-lime/10 text-lime" : "border-white/10 bg-surface2 text-zinc-300"
+                  }`}
+                >
+                  {reason}
+                </button>
+              ))}
+            </div>
+            <textarea
+              value={stopNote}
+              onChange={(e) => setStopNote(e.target.value)}
+              placeholder="Optional note (context for next cycle planning)"
+              className="mt-3 h-24 w-full rounded-2xl border-2 border-white/10 bg-surface2 p-3 text-white outline-none focus:border-lime"
+            />
+            <div className="mt-4 flex gap-2">
+              <SecondaryButton onClick={() => setStopOpen(false)}>Cancel</SecondaryButton>
+              <PrimaryButton
+                onClick={async () => {
+                  if (!stopReason) return;
+                  setStopping(true);
+                  try {
+                    await onEndMesocycleEarly({ reason: stopReason, note: stopNote.trim() || undefined });
+                    setStopOpen(false);
+                    setStopNote("");
+                  } finally {
+                    setStopping(false);
+                  }
+                }}
+                className="bg-amber-400 text-black hover:bg-amber-300"
+                disabled={stopping}
+              >
+                {stopping ? "Saving..." : "End & Use Data"}
+              </PrimaryButton>
             </div>
           </div>
         </div>

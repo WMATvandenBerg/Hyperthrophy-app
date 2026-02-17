@@ -12,6 +12,7 @@ interface DemoAccount extends AuthSession {
 }
 
 const SESSION_KEY = "hypertrophy-auth-session-v1";
+const ACCOUNTS_KEY = "hypertrophy-auth-accounts-v1";
 
 const DEMO_ACCOUNTS: DemoAccount[] = [
   {
@@ -34,6 +35,34 @@ function hasStorage() {
   return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
 }
 
+function getStoredAccounts(): DemoAccount[] {
+  if (!hasStorage()) return [...DEMO_ACCOUNTS];
+  try {
+    const raw = window.localStorage.getItem(ACCOUNTS_KEY);
+    const parsed = raw ? (JSON.parse(raw) as DemoAccount[]) : [];
+    const valid = Array.isArray(parsed)
+      ? parsed.filter((a) => a?.email && a?.password && a?.user_id)
+      : [];
+
+    const merged = [...DEMO_ACCOUNTS];
+    valid.forEach((a) => {
+      const exists = merged.some((x) => x.email.toLowerCase() === a.email.toLowerCase());
+      if (!exists) merged.push(a);
+    });
+    return merged;
+  } catch {
+    return [...DEMO_ACCOUNTS];
+  }
+}
+
+function persistCustomAccounts(accounts: DemoAccount[]) {
+  if (!hasStorage()) return;
+  const customOnly = accounts.filter(
+    (a) => !DEMO_ACCOUNTS.some((d) => d.email.toLowerCase() === a.email.toLowerCase()),
+  );
+  window.localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(customOnly));
+}
+
 export function getStoredSession(): AuthSession | null {
   if (!hasStorage()) return null;
   const raw = window.localStorage.getItem(SESSION_KEY);
@@ -48,7 +77,8 @@ export function getStoredSession(): AuthSession | null {
 }
 
 export async function loginWithEmail(email: string, password: string): Promise<AuthSession> {
-  const account = DEMO_ACCOUNTS.find(
+  const accounts = getStoredAccounts();
+  const account = accounts.find(
     (a) => a.email.toLowerCase() === email.trim().toLowerCase() && a.password === password,
   );
 
@@ -67,6 +97,53 @@ export async function loginWithEmail(email: string, password: string): Promise<A
     window.localStorage.setItem(SESSION_KEY, JSON.stringify(session));
   }
 
+  return session;
+}
+
+export async function registerWithEmail(input: {
+  name: string;
+  email: string;
+  password: string;
+}): Promise<AuthSession> {
+  const name = input.name.trim();
+  const email = input.email.trim().toLowerCase();
+  const password = input.password;
+
+  if (name.length < 2) {
+    throw new Error("Name must be at least 2 characters");
+  }
+  if (!email.includes("@") || email.length < 5) {
+    throw new Error("Please enter a valid email");
+  }
+  if (password.length < 8) {
+    throw new Error("Password must be at least 8 characters");
+  }
+
+  const accounts = getStoredAccounts();
+  const exists = accounts.some((a) => a.email.toLowerCase() === email);
+  if (exists) {
+    throw new Error("An account with this email already exists");
+  }
+
+  const created: DemoAccount = {
+    user_id: `u-${Date.now()}`,
+    email,
+    password,
+    name,
+    role: "athlete",
+  };
+  const next = [...accounts, created];
+  persistCustomAccounts(next);
+
+  const session: AuthSession = {
+    user_id: created.user_id,
+    email: created.email,
+    name: created.name,
+    role: created.role,
+  };
+  if (hasStorage()) {
+    window.localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+  }
   return session;
 }
 
